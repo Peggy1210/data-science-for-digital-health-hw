@@ -1,0 +1,99 @@
+with vasopressin as (
+  SELECT patient.subject_id, COUNT(v.vaso_amount) AS vasopressin_usage FROM `ds-for-digital-health.hw2_cohort.cohort` AS patient
+  LEFT JOIN `physionet-data.mimiciv_derived.vasopressin` AS v ON patient.stay_id = v.stay_id
+  GROUP BY patient.subject_id
+),
+patient_detail as (
+  SELECT patient.subject_id, detail.gender, detail.anchor_age FROM `ds-for-digital-health.hw2_cohort.cohort` AS patient
+  LEFT JOIN `physionet-data.mimiciv_hosp.patients` AS detail ON detail.subject_id = patient.subject_id
+),
+g as (
+  SELECT patient.subject_id, AVG(glucose) AS glucose_avg
+  FROM `ds-for-digital-health.hw2_cohort.cohort` AS patient
+  LEFT JOIN `physionet-data.mimiciv_derived.icustay_detail` AS icu ON icu.stay_id = patient.stay_id
+  LEFT JOIN `physionet-data.mimiciv_derived.chemistry` AS chemistry
+      ON chemistry.subject_id = patient.subject_id
+      AND chemistry.charttime >= DATETIME_SUB(icu.icu_intime, INTERVAL '6' HOUR)
+      AND chemistry.charttime <= DATETIME_ADD(icu.icu_intime, INTERVAL '1' DAY)
+    GROUP BY patient.subject_id
+),
+ventilation_option as (
+  SELECT patient.subject_id, COUNT(ventilation_status) as ventilation_status FROM `ds-for-digital-health.hw2_cohort.cohort` AS patient
+  LEFT JOIN `physionet-data.mimiciv_derived.ventilation` AS v ON patient.stay_id = v.stay_id
+  GROUP BY patient.subject_id
+),
+ventilation_invasive as (
+  SELECT patient.subject_id, COUNT(ventilation_status) as vent_invasive FROM `ds-for-digital-health.hw2_cohort.cohort` AS patient
+  LEFT JOIN `physionet-data.mimiciv_derived.ventilation` AS v ON patient.stay_id = v.stay_id
+  WHERE ventilation_status = 'InvasiveVent'
+  GROUP BY patient.subject_id
+),
+ventilation_supp as (
+  SELECT patient.subject_id, COUNT(ventilation_status) as vent_supplemental FROM `ds-for-digital-health.hw2_cohort.cohort` AS patient
+  LEFT JOIN `physionet-data.mimiciv_derived.ventilation` AS v ON patient.stay_id = v.stay_id
+  WHERE ventilation_status = 'SupplementalOxygen'
+  GROUP BY patient.subject_id
+),
+ventilation_hfnc as (
+  SELECT patient.subject_id, COUNT(ventilation_status) as vent_hfnc FROM `ds-for-digital-health.hw2_cohort.cohort` AS patient
+  LEFT JOIN `physionet-data.mimiciv_derived.ventilation` AS v ON patient.stay_id = v.stay_id
+  WHERE ventilation_status = 'HFNC'
+  GROUP BY patient.subject_id
+),
+ventilation_noninvasive as (
+  SELECT patient.subject_id, COUNT(ventilation_status) as vent_noninvasive FROM `ds-for-digital-health.hw2_cohort.cohort` AS patient
+  LEFT JOIN `physionet-data.mimiciv_derived.ventilation` AS v ON patient.stay_id = v.stay_id
+  WHERE ventilation_status = 'NonInvasiveVent'
+  GROUP BY patient.subject_id
+),
+ventilation_trach as (
+  SELECT patient.subject_id, COUNT(ventilation_status) as vent_trach FROM `ds-for-digital-health.hw2_cohort.cohort` AS patient
+  LEFT JOIN `physionet-data.mimiciv_derived.ventilation` AS v ON patient.stay_id = v.stay_id
+  WHERE ventilation_status = 'Tracheostomy'
+  GROUP BY patient.subject_id
+),
+ventilation as (
+  SELECT patient.subject_id, ventilation_status, vent_invasive, vent_supplemental, vent_hfnc, vent_noninvasive, vent_trach FROM `ds-for-digital-health.hw2_cohort.cohort` AS patient
+  LEFT JOIN ventilation_option ON patient.subject_id = ventilation_option.subject_id
+  LEFT JOIN ventilation_invasive ON patient.subject_id = ventilation_invasive.subject_id
+  LEFT JOIN ventilation_supp ON patient.subject_id = ventilation_supp.subject_id
+  LEFT JOIN ventilation_hfnc ON patient.subject_id = ventilation_hfnc.subject_id
+  LEFT JOIN ventilation_noninvasive ON patient.subject_id = ventilation_noninvasive.subject_id
+  LEFT JOIN ventilation_trach ON patient.subject_id = ventilation_trach.subject_id
+),
+coagulation as (
+  SELECT patient.subject_id,
+    AVG(c.inr) as avg_inr, MAX(c.inr) as max_inr, MIN(c.inr) as min_inr, 
+    AVG(c.pt) as avg_pt, MAX(c.pt) as max_pt, MIN(c.pt) as min_pt, 
+    AVG(c.ptt) as avg_ptt, MAX(c.ptt) as max_ptt,  MIN(c.ptt) as min_ptt, 
+  FROM `ds-for-digital-health.hw2_cohort.cohort` AS patient
+  LEFT JOIN `physionet-data.mimiciv_derived.coagulation` AS c ON patient.hadm_id = c.hadm_id
+  GROUP BY patient.subject_id
+)
+
+SELECT patient.subject_id,
+  patient_detail.gender, patient_detail.anchor_age,
+  icu_detail.race,
+  vasopressin.vasopressin_usage, 
+  -- urine output
+  urine.urineoutput,
+  -- lab
+  lab.hemoglobin_min, lab.hemoglobin_max, lab.creatinine_min, lab.creatinine_max, lab.glucose_min, lab.glucose_max, g.glucose_avg, lab.inr_min, lab.inr_max, lab.pt_min, lab.pt_max, lab.ptt_min, lab.ptt_max,
+  -- bg
+  bg.lactate_min, bg.lactate_max,
+  -- vital sign
+  vitalsign.heart_rate_min, vitalsign.heart_rate_max, vitalsign.heart_rate_mean, vitalsign.resp_rate_min, vitalsign.resp_rate_max, vitalsign.resp_rate_mean, vitalsign.temperature_min, vitalsign.temperature_max, vitalsign.temperature_mean,
+  ventilation_status, vent_invasive, vent_supplemental, vent_hfnc, vent_noninvasive, vent_trach,
+  patient.label 
+FROM `ds-for-digital-health.hw2_cohort.cohort` AS patient
+LEFT JOIN patient_detail ON patient_detail.subject_id = patient.subject_id
+LEFT JOIN `physionet-data.mimiciv_derived.icustay_detail` AS icu_detail ON icu_detail.stay_id = patient.stay_id
+LEFT JOIN vasopressin ON vasopressin.subject_id = patient.subject_id
+LEFT JOIN `physionet-data.mimiciv_derived.first_day_urine_output` AS urine ON patient.stay_id = urine.stay_id
+LEFT JOIN `physionet-data.mimiciv_derived.first_day_vitalsign` AS v ON patient.stay_id = v.stay_id
+LEFT JOIN `physionet-data.mimiciv_derived.first_day_lab` AS lab ON patient.stay_id = lab.stay_id
+LEFT JOIN `physionet-data.mimiciv_derived.first_day_bg` AS bg ON patient.stay_id = bg.stay_id
+LEFT JOIN `physionet-data.mimiciv_derived.first_day_vitalsign` AS vitalsign ON patient.stay_id = vitalsign.stay_id
+LEFT JOIN ventilation ON ventilation.subject_id = patient.subject_id
+LEFT JOIN coagulation ON coagulation.subject_id = patient.subject_id
+LEFT JOIN g ON g.subject_id = patient.subject_id

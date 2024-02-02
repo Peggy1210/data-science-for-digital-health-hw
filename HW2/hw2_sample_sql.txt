@@ -1,0 +1,23 @@
+with patient_data as (WITH icd_data AS (
+  SELECT DISTINCT icd.subject_id, icd.hadm_id
+  FROM `physionet-data.mimiciv_hosp.diagnoses_icd` as icd
+  WHERE SUBSTR(icd_code, 1, 3) IN ('I26') or SUBSTR(icd_code, 1,4) IN ('4151')
+),
+
+age_data as (
+  select distinct p.subject_id, hadm_id,
+  from `physionet-data.mimiciv_derived.age` as p
+  INNER JOIN `physionet-data.mimiciv_hosp.patients` as patient
+  ON p.subject_id = patient.subject_id
+  where age >= 18
+)
+
+SELECT DISTINCT icu.subject_id, icu.hadm_id, icu.stay_id, hospital_expire_flag as label, RANK() OVER (PARTITION BY icu.subject_id ORDER BY icu_intime ASC) AS rank
+FROM `physionet-data.mimiciv_derived.icustay_detail` as icu
+INNER JOIN age_data
+ON age_data.subject_id = icu.subject_id and age_data.hadm_id = icu.hadm_id
+INNER JOIN icd_data
+ON icd_data.subject_id = icu.subject_id AND icd_data.hadm_id = icu.hadm_id
+)
+select * except(rank) from patient_data
+where rank = 1
